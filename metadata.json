@@ -1,0 +1,6 @@
+{
+  "name": "健康4S · AI 全身健康3D体检报告",
+  "description": "基于可交互 3D 全息人体模型的全身健康体检报告与风险干预系统，深度适配移动端与桌面端。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

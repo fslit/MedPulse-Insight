@@ -1,0 +1,2189 @@
+# AI 全身健康 3D 方案
+
+---
+
+## You
+
+[Attachment: image.png]
+
+实现这效果，人物要可以点最好有3d效果，要多考虑移动端效果
+
+---
+
+## AI Studio
+
+要实现这张截图中的 **“AI 全身健康体检报告”** 效果，并满足 **3D 可点击人物** 和 **移动端深度适配**，核心技术栈建议采用：
+
+1. **视觉风格**：深空蓝科技感玻璃拟态（Glassmorphism）+ 霓虹微光边框 + 响应式 Grid/Flex 布局。
+2. **3D 可交互人体**：使用 **Three.js** 构建带 **Fresnel（菲涅尔）边缘发光 Shader** 的全息透明人体外壳 + 内部发光器官（支持心脏跳动、肺部呼吸动效）+ **Raycaster 射线拾取点击** + **3D 坐标实时投影到 2D 标签连线**。
+3. **移动端专项优化**：
+   - **布局重构**：桌面端三栏布局，移动端自动转为单栏流式布局，并将 **3D 人体置顶展示**，方便手机首屏直接交互。
+   - **防遮挡标签切换**：桌面端在 3D 人物两侧显示“引线+浮窗卡片”；移动端屏幕窄，自动隐藏两侧引线卡片，改为 **3D 器官发光热点 + 底部横向器官快捷胶囊栏**。
+   - **详情交互升级**：点击器官/风险项后，移动端弹出 **Bottom Sheet（底部抽屉）**，桌面端弹出居中/侧边浮层。
+   - **防误触与滑动冲突**：区分“拖拽旋转（位移 > 6px）”和“点击器官（位移 < 6px）”，并提供移动端“锁定3D/恢复滑屏”切换，避免手指滑不动页面。
+
+---
+
+### 完整可运行代码（单文件 HTML，可直接浏览器打开体验）
+
+下面是一个完整实现截图所有模块（含真实可旋转、缩放、点击器官的 3D 全息人体、交互式趋势图、AI 医学影像预览、移动端底部抽屉）的代码。保存为 `health-3d.html` 并用现代浏览器（或本地静态服务器）打开即可运行：
+
+```html
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>健康4S - AI 全身健康体检报告 (3D交互版)</title>
+  <style>
+    :root {
+      --bg-deep: #040b18;
+      --bg-card: rgba(11, 26, 54, 0.72);
+      --bg-card-hover: rgba(16, 38, 76, 0.85);
+      --border-glow: rgba(56, 189, 248, 0.22);
+      --cyan: #38bdf8;
+      --cyan-bright: #00e5ff;
+      --green: #22c55e;
+      --green-soft: rgba(34, 197, 94, 0.16);
+      --amber: #f59e0b;
+      --amber-soft: rgba(245, 158, 11, 0.16);
+      --red: #ef4444;
+      --red-soft: rgba(239, 68, 68, 0.16);
+      --text-main: #f1f5f9;
+      --text-sub: #94a3b8;
+      --radius-lg: 18px;
+      --radius-md: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at 50% 22%, rgba(0, 140, 255, 0.18), transparent 55%),
+        radial-gradient(circle at 12% 75%, rgba(16, 185, 129, 0.08), transparent 45%),
+        linear-gradient(180deg, #030916 0%, #061329 50%, #040b18 100%);
+      color: var(--text-main);
+      min-height: 100vh;
+      overflow-x: hidden;
+      line-height: 1.5;
+    }
+
+    /* 滚动条美化 */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(56, 189, 248, 0.25); border-radius: 99px; }
+
+    .container {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 0 20px 48px;
+    }
+
+    /* 顶部导航 */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 40;
+      background: rgba(4, 12, 28, 0.82);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border-bottom: 1px solid rgba(56, 189, 248, 0.14);
+    }
+
+    .navbar-inner {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .brand-logo {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, rgba(0, 210, 255, 0.25), rgba(37, 99, 235, 0.3));
+      border: 1px solid rgba(56, 189, 248, 0.45);
+      display: grid;
+      place-items: center;
+      box-shadow: 0 0 18px rgba(0, 210, 255, 0.25);
+    }
+
+    .brand-title { font-size: 17px; font-weight: 700; letter-spacing: 0.5px; }
+    .brand-sub { font-size: 11px; color: var(--text-sub); display: block; }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .nav-links::-webkit-scrollbar { display: none; }
+
+    .nav-pill {
+      padding: 7px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      color: var(--text-sub);
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s;
+      border: 1px solid transparent;
+      background: transparent;
+    }
+
+    .nav-pill:hover { color: #fff; background: rgba(56, 189, 248, 0.1); }
+    .nav-pill.active {
+      color: #fff;
+      background: linear-gradient(135deg, #2563eb, #0284c7);
+      border-color: rgba(125, 211, 252, 0.4);
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
+    }
+
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .bell-btn {
+      position: relative;
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      display: grid;
+      place-items: center;
+      color: var(--text-main);
+      cursor: pointer;
+    }
+
+    .bell-dot {
+      position: absolute;
+      top: 6px;
+      right: 7px;
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--red);
+      box-shadow: 0 0 8px var(--red);
+    }
+
+    .avatar {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #38bdf8, #1d4ed8);
+      border: 2px solid rgba(56, 189, 248, 0.5);
+      display: grid;
+      place-items: center;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    /* 报告标题区 */
+    .report-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 16px;
+      margin: 22px 0 20px;
+      flex-wrap: wrap;
+    }
+
+    .report-title {
+      font-size: clamp(22px, 3vw, 30px);
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ai-badge {
+      background: linear-gradient(90deg, #38bdf8, #818cf8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      font-style: italic;
+    }
+
+    .report-desc {
+      font-size: 13px;
+      color: var(--text-sub);
+      margin-top: 4px;
+    }
+
+    .date-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border-glow);
+      font-size: 13px;
+      color: #cbd5e1;
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 通用玻璃卡片 */
+    .card {
+      background: var(--bg-card);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      border: 1px solid var(--border-glow);
+      border-radius: var(--radius-lg);
+      padding: 18px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+
+    .card-title {
+      font-size: 16px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .card-link {
+      font-size: 12px;
+      color: var(--text-sub);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      transition: color 0.2s;
+    }
+    .card-link:hover { color: var(--cyan); }
+
+    /* Hero 三栏布局 */
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 310px 1fr 320px;
+      gap: 18px;
+      align-items: stretch;
+    }
+
+    .hero-col {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    /* 左侧：健康指数环形图 */
+    .score-box {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-bottom: 14px;
+    }
+
+    .ring-wrap {
+      position: relative;
+      width: 168px;
+      height: 152px;
+      display: grid;
+      place-items: center;
+    }
+
+    .ring-center {
+      position: absolute;
+      text-align: center;
+      margin-top: 8px;
+    }
+
+    .score-num {
+      font-size: 46px;
+      font-weight: 800;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+      background: linear-gradient(180deg, #ffffff, #bae6fd);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .score-unit { font-size: 15px; font-weight: 600; color: #cbd5e1; margin-left: 2px; }
+    .score-label { font-size: 13px; color: #cbd5e1; margin-top: 4px; }
+    .score-label span { color: var(--green); font-weight: 700; }
+    .score-delta { font-size: 12px; color: var(--text-sub); margin-top: 2px; }
+    .score-delta strong { color: var(--green); }
+
+    .stat-list {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .stat-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(15, 34, 68, 0.65);
+      border: 1px solid rgba(56, 189, 248, 0.12);
+      font-size: 13px;
+    }
+
+    .stat-left { display: flex; align-items: center; gap: 9px; color: #e2e8f0; }
+
+    .badge-icon {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .badge-icon.green { background: var(--green-soft); color: var(--green); border: 1px solid rgba(34, 197, 94, 0.4); }
+    .badge-icon.amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.4); }
+    .badge-icon.red { background: var(--red-soft); color: var(--red); border: 1px solid rgba(239, 68, 68, 0.4); }
+
+    /* 关键指标概览 */
+    .metric-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 9px 0;
+      border-bottom: 1px dashed rgba(148, 163, 184, 0.14);
+      font-size: 13px;
+    }
+    .metric-row:last-child { border-bottom: none; padding-bottom: 0; }
+    .metric-name { display: flex; align-items: center; gap: 8px; color: #cbd5e1; }
+    .metric-val { display: flex; align-items: center; gap: 8px; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .metric-val small { font-weight: 400; color: var(--text-sub); font-size: 11px; }
+    .val-danger { color: #f87171; }
+    .pill-tag {
+      font-size: 11px;
+      padding: 2px 7px;
+      border-radius: 99px;
+      font-weight: 600;
+    }
+    .pill-tag.amber { background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.35); }
+
+    /* 中央：3D 交互人体容器 */
+    .stage-wrapper {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      background: radial-gradient(circle at 50% 48%, rgba(14, 116, 144, 0.22), rgba(6, 17, 38, 0.4) 70%);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 22px;
+      overflow: hidden;
+      min-height: 610px;
+    }
+
+    .stage-tabs {
+      position: relative;
+      z-index: 10;
+      margin: 14px auto 0;
+      display: inline-flex;
+      background: rgba(7, 19, 43, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      border-radius: 99px;
+      padding: 4px;
+      gap: 4px;
+    }
+
+    .stage-tab {
+      padding: 6px 18px;
+      border-radius: 99px;
+      font-size: 13px;
+      color: var(--text-sub);
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      transition: all 0.25s;
+    }
+
+    .stage-tab.active {
+      color: #fff;
+      background: linear-gradient(90deg, #0284c7, #38bdf8);
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.45);
+      font-weight: 600;
+    }
+
+    .canvas-area {
+      position: relative;
+      flex: 1;
+      width: 100%;
+      min-height: 490px;
+    }
+
+    #human-3d-canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+      cursor: grab;
+    }
+    #human-3d-canvas:active { cursor: grabbing; }
+
+    /* 3D 投影 SVG 连线层 */
+    #leader-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 4;
+    }
+
+    /* 桌面端两侧浮动器官卡片 */
+    #organ-labels-layer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      z-index: 5;
+    }
+
+    .organ-float-card {
+      position: absolute;
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      padding: 7px 11px;
+      border-radius: 12px;
+      background: rgba(7, 20, 44, 0.82);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(56, 189, 248, 0.32);
+      cursor: pointer;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      min-width: 118px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    }
+
+    .organ-float-card:hover,
+    .organ-float-card.active {
+      transform: scale(1.06);
+      border-color: var(--cyan-bright);
+      box-shadow: 0 0 18px rgba(0, 229, 255, 0.38);
+    }
+
+    .organ-float-card.warn {
+      border-color: rgba(245, 158, 11, 0.55);
+      background: rgba(34, 22, 12, 0.78);
+    }
+
+    .organ-icon-box {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      background: rgba(56, 189, 248, 0.14);
+      flex-shrink: 0;
+    }
+    .organ-float-card.warn .organ-icon-box { background: rgba(245, 158, 11, 0.18); }
+
+    .organ-meta h4 { font-size: 13px; font-weight: 700; line-height: 1.2; }
+    .organ-status { font-size: 11px; display: flex; align-items: center; gap: 4px; margin-top: 2px; }
+    .organ-status.ok { color: var(--green); }
+    .organ-status.warn { color: var(--amber); }
+
+    /* 3D 器官热区小圆点（全端可见，移动端主打） */
+    .hotspot-dot {
+      position: absolute;
+      width: 16px;
+      height: 16px;
+      margin-left: -8px;
+      margin-top: -8px;
+      border-radius: 50%;
+      pointer-events: auto;
+      cursor: pointer;
+      border: 2px solid #fff;
+      background: var(--cyan-bright);
+      box-shadow: 0 0 12px var(--cyan-bright);
+      transition: transform 0.2s;
+      z-index: 6;
+    }
+    .hotspot-dot.warn {
+      background: var(--amber);
+      box-shadow: 0 0 14px var(--amber);
+      animation: pulseWarn 1.4s infinite;
+    }
+    .hotspot-dot:hover { transform: scale(1.35); }
+
+    @keyframes pulseWarn {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 8px var(--amber); }
+      50% { transform: scale(1.25); box-shadow: 0 0 20px var(--amber); }
+    }
+
+    /* 3D 底部控制栏 */
+    .stage-controls {
+      position: relative;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      background: rgba(4, 13, 30, 0.72);
+      border-top: 1px solid rgba(56, 189, 248, 0.16);
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stage-hint {
+      font-size: 12px;
+      color: var(--text-sub);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .ctrl-btns { display: flex; gap: 6px; }
+
+    .ctrl-btn {
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 12px;
+      color: #cbd5e1;
+      background: rgba(56, 189, 248, 0.12);
+      border: 1px solid rgba(56, 189, 248, 0.25);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .ctrl-btn.active, .ctrl-btn:hover {
+      background: rgba(56, 189, 248, 0.28);
+      color: #fff;
+      border-color: var(--cyan);
+    }
+
+    /* 移动端专属：3D下方快速器官选择条 */
+    .mobile-organ-chips {
+      display: none;
+      gap: 8px;
+      padding: 10px 12px;
+      overflow-x: auto;
+      background: rgba(6, 17, 38, 0.88);
+      border-top: 1px solid rgba(56, 189, 248, 0.14);
+      scrollbar-width: none;
+    }
+    .mobile-organ-chips::-webkit-scrollbar { display: none; }
+
+    .organ-chip {
+      flex-shrink: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 99px;
+      font-size: 12px;
+      background: rgba(15, 34, 68, 0.8);
+      border: 1px solid rgba(56, 189, 248, 0.22);
+      color: #e2e8f0;
+      cursor: pointer;
+    }
+    .organ-chip.warn { border-color: rgba(245, 158, 11, 0.55); color: #fcd34d; }
+    .organ-chip.active { background: rgba(2, 132, 199, 0.45); border-color: var(--cyan-bright); color: #fff; }
+
+    /* 右侧栏 */
+    .grade-badge {
+      padding: 3px 14px;
+      border-radius: 99px;
+      font-size: 12px;
+      font-weight: 700;
+      background: linear-gradient(90deg, #10b981, #22c55e);
+      color: #032212;
+    }
+
+    .grade-bar {
+      position: relative;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 4px;
+      height: 10px;
+      margin: 14px 0 12px;
+    }
+    .grade-seg { border-radius: 99px; }
+    .seg-1 { background: #ef4444; }
+    .seg-2 { background: #f59e0b; }
+    .seg-3 { background: #eab308; }
+    .seg-4 { background: #22c55e; box-shadow: 0 0 10px rgba(34, 197, 94, 0.6); }
+
+    .grade-pointer {
+      position: absolute;
+      right: 12%;
+      top: -9px;
+      width: 0;
+      height: 0;
+      border-left: 6px solid transparent;
+      border-right: 6px solid transparent;
+      border-top: 8px solid #fff;
+      filter: drop-shadow(0 0 4px #22c55e);
+    }
+
+    .risk-list { display: flex; flex-direction: column; gap: 10px; }
+
+    .risk-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 11px 12px;
+      border-radius: 12px;
+      background: rgba(15, 34, 68, 0.65);
+      border: 1px solid rgba(56, 189, 248, 0.14);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .risk-item:hover { border-color: var(--amber); background: rgba(30, 41, 72, 0.85); transform: translateX(2px); }
+
+    .risk-left { display: flex; align-items: center; gap: 11px; }
+    .risk-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 16px;
+      flex-shrink: 0;
+    }
+    .risk-icon.red { background: var(--red-soft); border: 1px solid rgba(239, 68, 68, 0.4); }
+    .risk-icon.amber { background: var(--amber-soft); border: 1px solid rgba(245, 158, 11, 0.4); }
+
+    .risk-name { font-size: 14px; font-weight: 700; }
+    .risk-sub { font-size: 12px; color: var(--text-sub); }
+
+    .ai-bullets {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 9px;
+      margin-bottom: 14px;
+      font-size: 13px;
+      color: #cbd5e1;
+    }
+    .ai-bullets li { display: flex; align-items: flex-start; gap: 8px; }
+
+    .btn-primary {
+      width: 100%;
+      padding: 11px 16px;
+      border-radius: 12px;
+      border: 1px solid rgba(125, 211, 252, 0.45);
+      background: linear-gradient(90deg, #0284c7, #2563eb);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: 0 6px 20px rgba(2, 132, 199, 0.35);
+      transition: filter 0.2s, transform 0.15s;
+    }
+    .btn-primary:hover { filter: brightness(1.12); transform: translateY(-1px); }
+
+    /* 系统健康评分 */
+    .section-mt { margin-top: 18px; }
+
+    .system-grid {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      gap: 12px;
+    }
+
+    .system-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(11, 27, 56, 0.72);
+      border: 1px solid rgba(56, 189, 248, 0.16);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .system-card:hover { border-color: var(--cyan); transform: translateY(-2px); }
+
+    .sys-icon {
+      width: 40px;
+      height: 40px;
+      border-radius: 11px;
+      display: grid;
+      place-items: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .sys-icon.warn { background: var(--amber-soft); border: 1px solid rgba(245, 158, 11, 0.35); }
+    .sys-icon.ok { background: rgba(16, 185, 129, 0.14); border: 1px solid rgba(16, 185, 129, 0.35); }
+
+    .sys-name { font-size: 12px; color: var(--text-sub); }
+    .sys-score { font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+    .sys-score.ok { color: #34d399; }
+    .sys-score.warn { color: #fbbf24; }
+    .sys-score small { font-size: 12px; font-weight: 500; color: #cbd5e1; margin-left: 2px; }
+
+    /* 影像 + 趋势双栏 */
+    .mid-grid {
+      display: grid;
+      grid-template-columns: 1.05fr 1fr;
+      gap: 18px;
+      margin-top: 18px;
+    }
+
+    .imaging-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+    }
+
+    .img-card {
+      background: rgba(8, 20, 44, 0.85);
+      border: 1px solid rgba(56, 189, 248, 0.18);
+      border-radius: 14px;
+      overflow: hidden;
+      cursor: pointer;
+      transition: border-color 0.2s;
+    }
+    .img-card:hover { border-color: var(--cyan); }
+
+    .img-preview {
+      position: relative;
+      height: 120px;
+      background: #030914;
+      overflow: hidden;
+    }
+    .img-preview canvas { width: 100%; height: 100%; display: block; }
+
+    .scan-line {
+      position: absolute;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, transparent, var(--cyan-bright), transparent);
+      box-shadow: 0 0 10px var(--cyan-bright);
+      animation: scanMove 3.2s linear infinite;
+      opacity: 0.7;
+    }
+    @keyframes scanMove {
+      0% { top: 0%; }
+      100% { top: 100%; }
+    }
+
+    .img-body { padding: 10px; }
+    .img-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 5px; }
+    .img-title { font-size: 13px; font-weight: 700; }
+    .tag-ok { font-size: 10px; padding: 2px 6px; border-radius: 6px; background: var(--green-soft); color: var(--green); border: 1px solid rgba(34, 197, 94, 0.3); }
+    .tag-warn { font-size: 10px; padding: 2px 6px; border-radius: 6px; background: var(--amber-soft); color: var(--amber); border: 1px solid rgba(245, 158, 11, 0.35); }
+    .img-desc { font-size: 11px; color: var(--text-sub); line-height: 1.4; }
+
+    /* 趋势图 */
+    .chart-legend {
+      display: flex;
+      gap: 14px;
+      font-size: 11px;
+      color: #cbd5e1;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
+    }
+    .legend-dot { display: inline-flex; align-items: center; gap: 5px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; }
+
+    .chart-wrap {
+      position: relative;
+      width: 100%;
+      height: 190px;
+    }
+    .chart-tooltip {
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      background: rgba(6, 17, 38, 0.94);
+      border: 1px solid rgba(56, 189, 248, 0.38);
+      border-radius: 10px;
+      padding: 8px 11px;
+      font-size: 11px;
+      pointer-events: none;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+      font-variant-numeric: tabular-nums;
+    }
+
+    /* 底部个性化方案 */
+    .plan-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+
+    .plan-card {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 14px;
+      background: rgba(12, 30, 62, 0.65);
+      border: 1px solid rgba(56, 189, 248, 0.16);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .plan-card:hover { border-color: var(--cyan); background: rgba(17, 42, 86, 0.8); }
+    .plan-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      font-size: 19px;
+      flex-shrink: 0;
+    }
+    .plan-title { font-size: 14px; font-weight: 700; display: flex; align-items: center; justify-content: space-between; width: 100%; }
+    .plan-desc { font-size: 12px; color: var(--text-sub); margin-top: 3px; }
+
+    /* 详情弹窗 / 移动端底部抽屉 */
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(2, 6, 18, 0.72);
+      backdrop-filter: blur(6px);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+    }
+    .modal-backdrop.open { display: flex; }
+
+    .modal-sheet {
+      width: 100%;
+      max-width: 480px;
+      background: linear-gradient(180deg, #0b1d3f, #061229);
+      border: 1px solid rgba(56, 189, 248, 0.38);
+      border-radius: 20px;
+      padding: 20px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.65);
+      animation: popIn 0.24s ease-out;
+      max-height: 85vh;
+      overflow-y: auto;
+    }
+
+    @keyframes popIn {
+      from { opacity: 0; transform: translateY(18px) scale(0.97); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .sheet-handle {
+      display: none;
+      width: 40px;
+      height: 4px;
+      border-radius: 99px;
+      background: rgba(148, 163, 184, 0.4);
+      margin: -6px auto 14px;
+    }
+
+    .modal-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .close-btn {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      border: 1px solid rgba(148, 163, 184, 0.25);
+      background: rgba(255, 255, 255, 0.06);
+      color: #fff;
+      cursor: pointer;
+      font-size: 16px;
+    }
+
+    .detail-kv-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin: 14px 0;
+    }
+    .detail-kv {
+      background: rgba(15, 35, 70, 0.7);
+      border: 1px solid rgba(56, 189, 248, 0.16);
+      border-radius: 12px;
+      padding: 10px;
+    }
+    .detail-kv small { display: block; font-size: 11px; color: var(--text-sub); }
+    .detail-kv strong { font-size: 15px; color: #fff; margin-top: 2px; display: block; }
+
+    /* ================== 平板与移动端深度适配 ================== */
+    @media (max-width: 1120px) {
+      .hero-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+      .stage-wrapper {
+        grid-column: 1 / -1;
+        order: -1; /* 平板与手机上将3D核心交互区放在最上方 */
+        min-height: 520px;
+      }
+      .system-grid { grid-template-columns: repeat(3, 1fr); }
+      .mid-grid { grid-template-columns: 1fr; }
+      .plan-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 767px) {
+      .container { padding: 0 12px 36px; }
+      .navbar-inner { padding: 10px 12px; flex-wrap: wrap; }
+      .nav-links { order: 3; width: 100%; padding-top: 6px; border-top: 1px solid rgba(56, 189, 248, 0.1); }
+      .brand-sub { display: none; }
+
+      .report-header { margin: 14px 0; }
+      .hero-grid { grid-template-columns: 1fr; gap: 14px; }
+
+      /* 移动端 3D 容器优化 */
+      .stage-wrapper { min-height: auto; border-radius: 18px; }
+      .canvas-area { min-height: 360px; height: 360px; }
+
+      /* 移动端隐藏左右两侧悬浮卡片，防止遮挡3D人物，保留圆点热点 + 底部快捷芯片栏 */
+      #organ-labels-layer,
+      #leader-svg { display: none !important; }
+      .mobile-organ-chips { display: flex; }
+
+      .system-grid {
+        display: flex;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        gap: 10px;
+        padding-bottom: 4px;
+      }
+      .system-card {
+        min-width: 150px;
+        flex-shrink: 0;
+        scroll-snap-align: start;
+      }
+
+      .imaging-grid {
+        display: flex;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        gap: 10px;
+      }
+      .img-card {
+        min-width: 210px;
+        flex-shrink: 0;
+        scroll-snap-align: start;
+      }
+
+      .plan-grid { grid-template-columns: 1fr; }
+
+      /* 移动端弹窗改为 Bottom Sheet 底部抽屉 */
+      .modal-backdrop {
+        align-items: flex-end;
+        padding: 0;
+      }
+      .modal-sheet {
+        max-width: 100%;
+        border-radius: 22px 22px 0 0;
+        border-bottom: none;
+        animation: slideUp 0.25s ease-out;
+      }
+      .sheet-handle { display: block; }
+    }
+
+    @keyframes slideUp {
+      from { transform: translateY(100%); }
+      to { transform: translateY(0); }
+    }
+  </style>
+  <!-- 引入 Three.js ES Module ImportMap -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <!-- 顶部导航 -->
+  <header class="navbar">
+    <div class="navbar-inner">
+      <div class="brand">
+        <div class="brand-logo">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.2">
+            <path d="M12 21s-7-4.5-9-9.5C1.2 7 4.5 3.5 8 4.2c1.8.4 3.2 1.6 4 2.8.8-1.2 2.2-2.4 4-2.8 3.5-.7 6.8 2.8 5 7.3-2 5-9 9.5-9 9.5z"/>
+            <polyline points="6 12 9.5 12 11 9 13 15 14.5 12 18 12" stroke="#00e5ff"/>
+          </svg>
+        </div>
+        <div>
+          <span class="brand-title">健康4S</span>
+          <span class="brand-sub">AI 健康管理 · 检测 · 解读 · 方案</span>
+        </div>
+      </div>
+
+      <nav class="nav-links" id="top-nav">
+        <button class="nav-pill active">体检报告</button>
+        <button class="nav-pill">健康画像</button>
+        <button class="nav-pill">风险评估</button>
+        <button class="nav-pill">干预方案</button>
+        <button class="nav-pill">历史对比</button>
+      </nav>
+
+      <div class="nav-actions">
+        <button class="bell-btn" title="风险提醒">
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+          </svg>
+          <span class="bell-dot"></span>
+        </button>
+        <div class="avatar">李</div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- 标题栏 -->
+    <section class="report-header">
+      <div>
+        <h1 class="report-title"><span class="ai-badge">AI</span> 全身健康体检报告</h1>
+        <p class="report-desc">基于多维体检数据与 AI 分析，为您生成个性化健康评估和改善方案（点击 3D 人体器官可查看详情）</p>
+      </div>
+      <div class="date-chip">
+        <span>📅</span>
+        <span>体检日期 <strong>2026-11-19</strong></span>
+      </div>
+    </section>
+
+    <!-- 核心三栏区 -->
+    <section class="hero-grid">
+      <!-- 左栏：健康指数 + 关键指标 -->
+      <div class="hero-col">
+        <div class="card">
+          <div class="score-box">
+            <div class="ring-wrap">
+              <svg width="168" height="152" viewBox="0 0 168 152">
+                <defs>
+                  <linearGradient id="scoreGrad" x1="0%" y1="100%" x2="100%" y2="0%">
+                    <stop offset="0%" stop-color="#38bdf8"/>
+                    <stop offset="55%" stop-color="#10b981"/>
+                    <stop offset="100%" stop-color="#22c55e"/>
+                  </linearGradient>
+                </defs>
+                <!-- 背景弧 -->
+                <path d="M 30 124 A 66 66 0 1 1 138 124" fill="none" stroke="rgba(148,163,184,0.18)" stroke-width="12" stroke-linecap="round"/>
+                <!-- 86% 进度弧 -->
+                <path d="M 30 124 A 66 66 0 1 1 138 124" fill="none" stroke="url(#scoreGrad)" stroke-width="12" stroke-linecap="round"
+                  stroke-dasharray="296" stroke-dashoffset="42" style="filter: drop-shadow(0 0 8px rgba(34,197,94,0.5));"/>
+              </svg>
+              <div class="ring-center">
+                <div><span class="score-num">86</span><span class="score-unit">分</span></div>
+                <div class="score-label">健康指数 · <span>良好</span></div>
+                <div class="score-delta">较上次 <strong>↑ +6 分</strong></div>
+              </div>
+            </div>
+            <div class="stat-list">
+              <div class="stat-row">
+                <span class="stat-left"><span class="badge-icon green">✓</span> 主要指标</span>
+                <span><strong style="color:var(--green)">23</strong> 项正常</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-left"><span class="badge-icon amber">!</span> 关注指标</span>
+                <span><strong style="color:var(--amber)">3</strong> 项</span>
+              </div>
+              <div class="stat-row">
+                <span class="stat-left"><span class="badge-icon red">!</span> 高风险指标</span>
+                <span><strong style="color:var(--red)">1</strong> 项</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">关键指标概览</h2>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">💗 血压</span>
+            <span class="metric-val val-danger">142 / 92 <span class="badge-icon red" style="width:18px;height:18px;font-size:10px">↑</span></span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">📈 心率</span>
+            <span class="metric-val">76 <small>次/分</small> <span class="badge-icon green" style="width:18px;height:18px;font-size:10px">✓</span></span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">💧 血糖</span>
+            <span class="metric-val">5.2 <small>mmol/L</small> <span class="badge-icon green" style="width:18px;height:18px;font-size:10px">✓</span></span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">🧬 总胆固醇</span>
+            <span class="metric-val val-danger">5.8 <small>mmol/L</small> <span class="badge-icon red" style="width:18px;height:18px;font-size:10px">↑</span></span>
+          </div>
+          <div class="metric-row">
+            <span class="metric-name">⚖️ BMI</span>
+            <span class="metric-val">24.6 <span class="pill-tag amber">偏高</span></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 中栏：3D 可交互全息人体 -->
+      <div class="stage-wrapper" id="stage-wrapper">
+        <div class="stage-tabs" id="stage-tabs">
+          <button class="stage-tab active" data-mode="overview">全身概览</button>
+          <button class="stage-tab" data-mode="systems">系统评估</button>
+          <button class="stage-tab" data-mode="xray">透视模式</button>
+        </div>
+
+        <div class="canvas-area" id="canvas-area">
+          <canvas id="human-3d-canvas"></canvas>
+          <svg id="leader-svg"></svg>
+          <div id="organ-labels-layer"></div>
+          <div id="hotspots-layer"></div>
+        </div>
+
+        <!-- 移动端下方快速器官条 -->
+        <div class="mobile-organ-chips" id="mobile-organ-chips"></div>
+
+        <div class="stage-controls">
+          <span class="stage-hint">🖱️ 拖动旋转 3D 模型 · 点击发光器官查看 AI 报告</span>
+          <div class="ctrl-btns">
+            <button class="ctrl-btn active" id="btn-autorotate">自动旋转</button>
+            <button class="ctrl-btn" id="btn-reset-cam">重置视角</button>
+            <button class="ctrl-btn" id="btn-scroll-lock" style="display:none;">允许滑屏</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右栏：健康等级 + 风险提示 + AI 结论 -->
+      <div class="hero-col">
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">健康等级</h2>
+            <span class="grade-badge">良好</span>
+          </div>
+          <div class="grade-bar">
+            <div class="grade-pointer"></div>
+            <div class="grade-seg seg-1"></div>
+            <div class="grade-seg seg-2"></div>
+            <div class="grade-seg seg-3"></div>
+            <div class="grade-seg seg-4"></div>
+          </div>
+          <p style="font-size:13px; color:#cbd5e1;">整体健康状况良好，部分指标需关注，建议调整生活方式并定期复查。</p>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">主要风险提示 <span style="color:var(--red);font-size:14px;">(3)</span></h2>
+          </div>
+          <div class="risk-list">
+            <div class="risk-item" onclick="window.focusOrgan('heart')">
+              <div class="risk-left">
+                <div class="risk-icon red">❤️</div>
+                <div>
+                  <div class="risk-name">血压偏高</div>
+                  <div class="risk-sub">142 / 92 mmHg</div>
+                </div>
+              </div>
+              <span style="color:var(--text-sub)">›</span>
+            </div>
+            <div class="risk-item" onclick="window.focusOrgan('liver')">
+              <div class="risk-left">
+                <div class="risk-icon amber">🟡</div>
+                <div>
+                  <div class="risk-name">脂肪肝（轻度）</div>
+                  <div class="risk-sub">肝脂肪含量 8.6%</div>
+                </div>
+              </div>
+              <span style="color:var(--text-sub)">›</span>
+            </div>
+            <div class="risk-item" onclick="window.focusOrgan('vascular')">
+              <div class="risk-left">
+                <div class="risk-icon amber">🩸</div>
+                <div>
+                  <div class="risk-name">血脂偏高</div>
+                  <div class="risk-sub">总胆固醇 5.8 mmol/L</div>
+                </div>
+              </div>
+              <span style="color:var(--text-sub)">›</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2 class="card-title">✨ AI 健康结论</h2>
+          </div>
+          <ul class="ai-bullets">
+            <li><span class="badge-icon green" style="width:18px;height:18px;font-size:10px;flex-shrink:0;">✓</span> 整体健康状况良好。</li>
+            <li><span class="badge-icon green" style="width:18px;height:18px;font-size:10px;flex-shrink:0;">✓</span> 心血管代谢存在一定风险（血压、血脂）。</li>
+            <li><span class="badge-icon green" style="width:18px;height:18px;font-size:10px;flex-shrink:0;">✓</span> 建议控制饮食、增加运动，并定期复查。</li>
+          </ul>
+          <button class="btn-primary" onclick="window.openAISummary()">✨ 查看详细 AI 解读 ›</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 系统健康评分 -->
+    <section class="card section-mt">
+      <div class="card-header">
+        <h2 class="card-title">系统健康评分</h2>
+        <span class="card-link" onclick="window.openAISummary()">查看全部系统 ›</span>
+      </div>
+      <div class="system-grid">
+        <div class="system-card" onclick="window.focusOrgan('heart')">
+          <div class="sys-icon warn">❤️</div>
+          <div><div class="sys-name">心血管</div><div class="sys-score warn">78<small>分</small></div></div>
+        </div>
+        <div class="system-card" onclick="window.focusOrgan('lungs')">
+          <div class="sys-icon ok">🫁</div>
+          <div><div class="sys-name">呼吸系统</div><div class="sys-score ok">92<small>分</small></div></div>
+        </div>
+        <div class="system-card" onclick="window.focusOrgan('stomach')">
+          <div class="sys-icon ok">🧬</div>
+          <div><div class="sys-name">消化系统</div><div class="sys-score ok">88<small>分</small></div></div>
+        </div>
+        <div class="system-card" onclick="window.focusOrgan('liver')">
+          <div class="sys-icon warn">🟠</div>
+          <div><div class="sys-name">肝脏代谢</div><div class="sys-score warn">80<small>分</small></div></div>
+        </div>
+        <div class="system-card" onclick="window.focusOrgan('kidneys')">
+          <div class="sys-icon ok">🫘</div>
+          <div><div class="sys-name">泌尿系统</div><div class="sys-score ok">90<small>分</small></div></div>
+        </div>
+        <div class="system-card" onclick="window.focusOrgan('bone')">
+          <div class="sys-icon ok">🦴</div>
+          <div><div class="sys-name">骨骼关节</div><div class="sys-score ok">87<small>分</small></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 关键检查影像 & 趋势图 -->
+    <section class="mid-grid">
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">关键检查影像 <small style="font-weight:400;color:var(--text-sub);font-size:12px;">(AI 辅助判读)</small></h2>
+        </div>
+        <div class="imaging-grid">
+          <div class="img-card" onclick="window.focusOrgan('liver')">
+            <div class="img-preview">
+              <canvas id="img-liver" width="220" height="130"></canvas>
+              <div class="scan-line"></div>
+            </div>
+            <div class="img-body">
+              <div class="img-head"><span class="img-title">肝脏 (超声)</span><span class="tag-ok">正常</span></div>
+              <p class="img-desc">肝脏形态正常，见轻度回声增强</p>
+            </div>
+          </div>
+          <div class="img-card" onclick="window.focusOrgan('stomach')">
+            <div class="img-preview">
+              <canvas id="img-stomach" width="220" height="130"></canvas>
+              <div class="scan-line" style="animation-delay:1s;"></div>
+            </div>
+            <div class="img-body">
+              <div class="img-head"><span class="img-title">胃镜</span><span class="tag-warn">轻度炎症</span></div>
+              <p class="img-desc">胃黏膜轻度充血，建议复查</p>
+            </div>
+          </div>
+          <div class="img-card" onclick="window.focusOrgan('kidneys')">
+            <div class="img-preview">
+              <canvas id="img-colon" width="220" height="130"></canvas>
+              <div class="scan-line" style="animation-delay:2s;"></div>
+            </div>
+            <div class="img-body">
+              <div class="img-head"><span class="img-title">肠镜</span><span class="tag-ok">正常</span></div>
+              <p class="img-desc">未见明显异常</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <h2 class="card-title">关键指标趋势</h2>
+          <span class="date-chip" style="padding:4px 10px;font-size:12px;">近 6 个月 ▾</span>
+        </div>
+        <div class="chart-legend">
+          <span class="legend-dot"><span class="dot" style="background:#38bdf8;"></span> 血压 (收缩压)</span>
+          <span class="legend-dot"><span class="dot" style="background:#f59e0b;"></span> 血脂 (总胆固醇)</span>
+          <span class="legend-dot"><span class="dot" style="background:#a78bfa;"></span> 体重 (kg)</span>
+        </div>
+        <div class="chart-wrap" id="trend-chart-wrap">
+          <svg id="trend-svg" viewBox="0 0 500 185" width="100%" height="100%"></svg>
+          <div class="chart-tooltip" id="chart-tooltip">
+            <div style="font-weight:700;margin-bottom:3px;color:#fff;" id="tt-month">11月</div>
+            <div style="color:#7dd3fc;">● 血压: <strong id="tt-bp">142</strong></div>
+            <div style="color:#fcd34d;">● 血脂: <strong id="tt-lip">5.8</strong></div>
+            <div style="color:#c4b5fd;">● 体重: <strong id="tt-wt">76.2</strong></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 个性化健康方案 -->
+    <section class="card section-mt">
+      <div class="card-header">
+        <h2 class="card-title">🎯 个性化健康方案 <small style="font-weight:400;color:var(--text-sub);font-size:12px;">· 基于 AI 分析，为您制定可执行改善计划</small></h2>
+        <span class="card-link" onclick="window.openAISummary()">方案详情 ›</span>
+      </div>
+      <div class="plan-grid">
+        <div class="plan-card" onclick="window.openPlanModal('exercise')">
+          <div class="plan-icon" style="background:rgba(56,189,248,0.16);border:1px solid rgba(56,189,248,0.4);">🏃</div>
+          <div style="flex:1;">
+            <div class="plan-title">运动建议 <span style="color:var(--text-sub)">›</span></div>
+            <p class="plan-desc">每周 ≥ 150 分钟中等强度运动</p>
+          </div>
+        </div>
+        <div class="plan-card" onclick="window.openPlanModal('diet')">
+          <div class="plan-icon" style="background:rgba(34,197,94,0.16);border:1px solid rgba(34,197,94,0.4);">🥗</div>
+          <div style="flex:1;">
+            <div class="plan-title">饮食建议 <span style="color:var(--text-sub)">›</span></div>
+            <p class="plan-desc">控制油脂、减少高盐高糖摄入</p>
+          </div>
+        </div>
+        <div class="plan-card" onclick="window.openPlanModal('sleep')">
+          <div class="plan-icon" style="background:rgba(129,140,248,0.16);border:1px solid rgba(129,140,248,0.4);">🛌</div>
+          <div style="flex:1;">
+            <div class="plan-title">作息建议 <span style="color:var(--text-sub)">›</span></div>
+            <p class="plan-desc">保证 7~8 小时高质量睡眠</p>
+          </div>
+        </div>
+        <div class="plan-card" onclick="window.openPlanModal('followup')">
+          <div class="plan-icon" style="background:rgba(16,185,129,0.16);border:1px solid rgba(16,185,129,0.4);">🗓️</div>
+          <div style="flex:1;">
+            <div class="plan-title">复查计划 <span style="color:var(--text-sub)">›</span></div>
+            <p class="plan-desc">3个月后复查血压、血脂、肝功能</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- 器官 / AI 详情弹窗 (桌面居中，移动端底部抽屉) -->
+  <div class="modal-backdrop" id="detail-modal" onclick="if(event.target===this) window.closeModal()">
+    <div class="modal-sheet">
+      <div class="sheet-handle"></div>
+      <div class="modal-head">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span id="modal-icon" style="font-size:24px;">❤️</span>
+          <div>
+            <h3 id="modal-title" style="font-size:18px;font-weight:700;">心脏评估</h3>
+            <span id="modal-badge" class="pill-tag amber">需关注</span>
+          </div>
+        </div>
+        <button class="close-btn" onclick="window.closeModal()">✕</button>
+      </div>
+      <p id="modal-summary" style="font-size:13px;color:#cbd5e1;line-height:1.6;"></p>
+      <div class="detail-kv-grid" id="modal-kvs"></div>
+      <div style="background:rgba(2,132,199,0.15);border:1px solid rgba(56,189,248,0.28);border-radius:12px;padding:12px;font-size:12px;color:#bae6fd;">
+        <strong>💡 AI 干预建议：</strong>
+        <span id="modal-advice"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- 逻辑脚本：Three.js 3D 人体 + 交互投影 + 图表 + 医学影像绘制 -->
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ==================== 1. 器官医学数据模型 ====================
+    const ORGAN_DATA = {
+      brain: {
+        name: '大脑', icon: '🧠', status: '正常', warn: false,
+        pos: [0, 1.56, 0.02], side: 'left', anchorOffset: [-0.95, 0.18],
+        summary: '脑部血管弹性及脑血流信号均处于正常参考范围，认知与睡眠节律评估良好。',
+        kvs: [['脑血流速度', '正常'], ['颈动脉阻力', '0.62 RI'], ['神经反射', '正常'], ['评估评分', '94 分']],
+        advice: '保持规律作息与每日7-8小时深度睡眠，避免长时间熬夜用脑。'
+      },
+      lungs: {
+        name: '肺部', icon: '🫁', status: '正常', warn: false,
+        pos: [0.16, 0.96, 0.06], side: 'right', anchorOffset: [0.95, 0.22],
+        summary: '双肺纹理清晰，肺通气功能良好，呼吸音清，未见结节或异常渗出影。',
+        kvs: [['肺活量 FVC', '4.12 L'], ['血氧饱和度', '99 %'], ['呼吸频率', '16 次/分'], ['系统评分', '92 分']],
+        advice: '继续保持有氧运动习惯，雾霾天建议户外佩戴防护口罩。'
+      },
+      heart: {
+        name: '心脏', icon: '❤️', status: '需关注', warn: true,
+        pos: [-0.07, 0.93, 0.12], side: 'left', anchorOffset: [-0.98, 0.0],
+        summary: '静息心率正常（76 次/分），但收缩压偏高（142/92 mmHg），提示心血管负荷轻度增加。',
+        kvs: [['血压指标', '142/92 mmHg'], ['静息心率', '76 次/分'], ['心电图', '窦性心律'], ['系统评分', '78 分']],
+        advice: '每日限盐 < 5g，连续监测早晚血压并记录，每周坚持 150 分钟快走或慢跑。'
+      },
+      liver: {
+        name: '肝脏', icon: '🟠', status: '轻度关注', warn: true,
+        pos: [0.14, 0.56, 0.10], side: 'right', anchorOffset: [0.96, 0.02],
+        summary: '肝脏形态大小正常，超声显示轻度脂肪浸润（肝脂肪含量 8.6%），转氨酶目前在正常范围。',
+        kvs: [['肝脂肪含量', '8.6 %'], ['谷丙转氨酶', '32 U/L'], ['超声影像', '轻度脂肪肝'], ['系统评分', '80 分']],
+        advice: '严格戒酒及含糖饮料，减少精制碳水与油炸食品，3个月后复查肝功与超声。'
+      },
+      stomach: {
+        name: '胃部', icon: '🧬', status: '正常', warn: false,
+        pos: [-0.11, 0.52, 0.10], side: 'left', anchorOffset: [-0.98, -0.15],
+        summary: '胃肠动力正常，幽门螺杆菌阴性；胃镜提示胃窦黏膜极轻度充血，总体风险可控。',
+        kvs: [['幽门螺杆菌', '阴性 (-)'], ['胃蛋白酶原', '正常'], ['胃镜筛查', '轻度充血'], ['系统评分', '88 分']],
+        advice: '三餐定时定量，少吃辛辣生冷与过烫食物，避免睡前两小时进食。'
+      },
+      kidneys: {
+        name: '肾脏', icon: '🫘', status: '正常', warn: false,
+        pos: [0.15, 0.36, -0.04], side: 'right', anchorOffset: [0.95, -0.18],
+        summary: '双肾形态轮廓规则，肾小球滤过率及尿常规指标均无异常。',
+        kvs: [['血肌酐', '74 μmol/L'], ['尿微量白蛋白', '阴性'], ['尿酸', '368 μmol/L'], ['系统评分', '90 分']],
+        advice: '保持每日饮水 1500~2000 ml，避免憋尿及长期盲目服用止痛药。'
+      },
+      bone: {
+        name: '骨骼', icon: '🦴', status: '正常', warn: false,
+        pos: [-0.21, -0.58, 0.03], side: 'left', anchorOffset: [-0.92, -0.08],
+        summary: '骨密度 T 值为 +0.4，钙磷代谢正常，脊柱及下肢关节间隙未见退行性改变。',
+        kvs: [['骨密度 T值', '+0.4'], ['血清钙', '2.35 mmol/L'], ['维生素D', '充足'], ['系统评分', '87 分']],
+        advice: '适当晒太阳促进维生素D合成，运动前充分热身保护膝关节。'
+      },
+      vascular: {
+        name: '血管', icon: '🩸', status: '轻度风险', warn: true,
+        pos: [0.22, -0.62, 0.05], side: 'right', anchorOffset: [0.92, -0.08],
+        summary: '总胆固醇 5.8 mmol/L（偏高），外周血管阻力轻度升高，需预防动脉粥样硬化进展。',
+        kvs: [['总胆固醇', '5.8 mmol/L'], ['低密度脂蛋白', '3.7 mmol/L'], ['甘油三酯', '1.85 mmol/L'], ['风险等级', '轻度风险']],
+        advice: '饮食增加深海鱼、燕麦等膳食纤维摄入，减少动物内脏与反式脂肪酸。'
+      }
+    };
+
+    // ==================== 2. Three.js 3D 全息人体构建 ====================
+    const canvas = document.getElementById('human-3d-canvas');
+    const canvasArea = document.getElementById('canvas-area');
+    const leaderSvg = document.getElementById('leader-svg');
+    const labelsLayer = document.getElementById('organ-labels-layer');
+    const hotspotsLayer = document.getElementById('hotspots-layer');
+    const chipsContainer = document.getElementById('mobile-organ-chips');
+
+    let scene, camera, renderer, controls, humanGroup, pedestalGroup;
+    let bodyShellMat, innerWireMat;
+    let organMeshes = {};
+    let selectedOrganId = null;
+    let autoRotate = true;
+    let clock = new THREE.Clock();
+
+    function createFresnelMaterial(colorHex = 0x1ea7ff, opacity = 0.42) {
+      return new THREE.ShaderMaterial({
+        uniforms: {
+          uColor: { value: new THREE.Color(colorHex) },
+          uTime: { value: 0 },
+          uOpacity: { value: opacity }
+        },
+        vertexShader: `
+          varying vec3 vNormal;
+          varying vec3 vViewPos;
+          varying vec3 vWorldPos;
+          void main() {
+            vNormal = normalize(normalMatrix * normal);
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            vViewPos = -mvPosition.xyz;
+            vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+            gl_Position = projectionMatrix * mvPosition;
+          }
+        `,
+        fragmentShader: `
+          uniform vec3 uColor;
+          uniform float uTime;
+          uniform float uOpacity;
+          varying vec3 vNormal;
+          varying vec3 vViewPos;
+          varying vec3 vWorldPos;
+          void main() {
+            vec3 normal = normalize(vNormal);
+            vec3 viewDir = normalize(vViewPos);
+            float fresnel = pow(1.0 - abs(dot(normal, viewDir)), 2.2);
+            float scan = 0.85 + 0.15 * sin(vWorldPos.y * 38.0 - uTime * 3.0);
+            float alpha = clamp((fresnel * 0.92 + 0.08) * uOpacity * scan, 0.03, 0.9);
+            gl_FragColor = vec4(uColor * (1.0 + fresnel * 0.7), alpha);
+          }
+        `,
+        transparent: true,
+        depthWrite: false,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending
+      });
+    }
+
+    function init3D() {
+      const width = canvasArea.clientWidth;
+      const height = canvasArea.clientHeight;
+
+      scene = new THREE.Scene();
+
+      camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 100);
+      camera.position.set(0, 0.35, 5.2);
+
+      renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.enablePan = false;
+      controls.minDistance = 2.8;
+      controls.maxDistance = 7.2;
+      controls.maxPolarAngle = Math.PI * 0.65;
+      controls.minPolarAngle = Math.PI * 0.25;
+      controls.target.set(0, 0.25, 0);
+
+      // 灯光
+      scene.add(new THREE.AmbientLight(0x60a5fa, 0.9));
+      const keyLight = new THREE.PointLight(0x38bdf8, 2.2, 12);
+      keyLight.position.set(2, 2.5, 3);
+      scene.add(keyLight);
+
+      humanGroup = new THREE.Group();
+      scene.add(humanGroup);
+
+      // 外层全息人体材质
+      bodyShellMat = createFresnelMaterial(0x0ea5e9, 0.55);
+      innerWireMat = new THREE.MeshBasicMaterial({
+        color: 0x38bdf8,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.08
+      });
+
+      const addBodyPart = (geo, pos, rot = [0, 0, 0], scale = [1, 1, 1]) => {
+        const mesh = new THREE.Mesh(geo, bodyShellMat);
+        mesh.position.set(...pos);
+        mesh.rotation.set(...rot);
+        mesh.scale.set(...scale);
+        humanGroup.add(mesh);
+
+        const wire = new THREE.Mesh(geo, innerWireMat);
+        wire.position.copy(mesh.position);
+        wire.rotation.copy(mesh.rotation);
+        wire.scale.copy(mesh.scale);
+        humanGroup.add(wire);
+      };
+
+      // 头部 + 颈部（Lathe 车削轮廓更贴合真人头颈）
+      const headPts = [
+        new THREE.Vector2(0.01, -0.22),
+        new THREE.Vector2(0.11, -0.18),
+        new THREE.Vector2(0.10, -0.07),
+        new THREE.Vector2(0.16, 0.02),
+        new THREE.Vector2(0.19, 0.14),
+        new THREE.Vector2(0.18, 0.26),
+        new THREE.Vector2(0.11, 0.34),
+        new THREE.Vector2(0.01, 0.36)
+      ];
+      addBodyPart(new THREE.LatheGeometry(headPts, 28), [0, 1.44, 0], [0, 0, 0], [0.95, 1, 1.05]);
+
+      // 躯干轮廓（肩-胸-腰-胯）
+      const torsoPts = [
+        new THREE.Vector2(0.01, -0.62),
+        new THREE.Vector2(0.28, -0.56),
+        new THREE.Vector2(0.27, -0.35),
+        new THREE.Vector2(0.24, -0.10),
+        new THREE.Vector2(0.32, 0.22),
+        new THREE.Vector2(0.35, 0.42),
+        new THREE.Vector2(0.25, 0.54),
+        new THREE.Vector2(0.11, 0.58)
+      ];
+      addBodyPart(new THREE.LatheGeometry(torsoPts, 32), [0, 0.65, 0], [0, 0, 0], [1.05, 1, 0.66]);
+
+      // 双臂（A字站姿）
+      const armGeo = new THREE.CapsuleGeometry(0.09, 0.52, 8, 16);
+      const forearmGeo = new THREE.CapsuleGeometry(0.075, 0.48, 8, 16);
+      addBodyPart(armGeo, [-0.47, 0.88, 0], [0, 0, -0.22]);
+      addBodyPart(forearmGeo, [-0.61, 0.35, 0.05], [-0.1, 0, -0.14]);
+      addBodyPart(armGeo, [0.47, 0.88, 0], [0, 0, 0.22]);
+      addBodyPart(forearmGeo, [0.61, 0.35, 0.05], [-0.1, 0, 0.14]);
+
+      // 双腿
+      const thighGeo = new THREE.CapsuleGeometry(0.135, 0.62, 10, 20);
+      const calfGeo = new THREE.CapsuleGeometry(0.10, 0.62, 10, 20);
+      addBodyPart(thighGeo, [-0.19, -0.32, 0], [0, 0, -0.04]);
+      addBodyPart(calfGeo, [-0.22, -1.02, -0.02], [0, 0, -0.02]);
+      addBodyPart(thighGeo, [0.19, -0.32, 0], [0, 0, 0.04]);
+      addBodyPart(calfGeo, [0.22, -1.02, -0.02], [0, 0, 0.02]);
+
+      // 脊柱微光线条（增强医学质感）
+      const spineMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.35 });
+      for (let i = 0; i < 12; i++) {
+        const disc = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.03, 12), spineMat);
+        disc.position.set(0, 0.22 + i * 0.085, -0.08);
+        humanGroup.add(disc);
+      }
+
+      // 构建内部可点击 3D 器官
+      buildOrgans();
+
+      // 脚底科幻全息底座圆环
+      pedestalGroup = new THREE.Group();
+      pedestalGroup.position.set(0, -1.46, 0);
+      const ring1 = new THREE.Mesh(
+        new THREE.RingGeometry(0.68, 0.72, 64),
+        new THREE.MeshBasicMaterial({ color: 0x00e5ff, side: THREE.DoubleSide, transparent: true, opacity: 0.75 })
+      );
+      ring1.rotation.x = -Math.PI / 2;
+      const ring2 = new THREE.Mesh(
+        new THREE.RingGeometry(0.92, 0.95, 48, 1, 0, Math.PI * 1.4),
+        new THREE.MeshBasicMaterial({ color: 0x38bdf8, side: THREE.DoubleSide, transparent: true, opacity: 0.5 })
+      );
+      ring2.rotation.x = -Math.PI / 2;
+      const glowDisc = new THREE.Mesh(
+        new THREE.CircleGeometry(0.95, 48),
+        new THREE.MeshBasicMaterial({ color: 0x0284c7, side: THREE.DoubleSide, transparent: true, opacity: 0.18 })
+      );
+      glowDisc.rotation.x = -Math.PI / 2;
+      pedestalGroup.add(ring1, ring2, glowDisc);
+      scene.add(pedestalGroup);
+
+      // 生成 UI 浮窗与移动端胶囊
+      buildOverlays();
+      setupInteraction();
+      animate();
+    }
+
+    function buildOrgans() {
+      const makeMat = (hex, emissiveHex) => new THREE.MeshPhongMaterial({
+        color: hex,
+        emissive: emissiveHex,
+        emissiveIntensity: 0.75,
+        transparent: true,
+        opacity: 0.88,
+        shininess: 80
+      });
+
+      // 大脑
+      const brainGroup = new THREE.Group();
+      const lobe = new THREE.SphereGeometry(0.105, 18, 18);
+      const bL = new THREE.Mesh(lobe, makeMat(0x60a5fa, 0x2563eb));
+      bL.position.set(-0.045, 0, 0); bL.scale.set(0.85, 0.9, 1.15);
+      const bR = new THREE.Mesh(lobe, makeMat(0x60a5fa, 0x2563eb));
+      bR.position.set(0.045, 0, 0); bR.scale.set(0.85, 0.9, 1.15);
+      brainGroup.add(bL, bR);
+      registerOrgan('brain', brainGroup);
+
+      // 肺部
+      const lungGroup = new THREE.Group();
+      const lungGeo = new THREE.CapsuleGeometry(0.085, 0.16, 10, 16);
+      const lL = new THREE.Mesh(lungGeo, makeMat(0x38bdf8, 0x0284c7));
+      lL.position.set(-0.26, 0, -0.02); lL.rotation.z = -0.12;
+      const lR = new THREE.Mesh(lungGeo, makeMat(0x38bdf8, 0x0284c7));
+      lR.position.set(0, 0, -0.02); lR.rotation.z = 0.12;
+      lungGroup.add(lL, lR);
+      registerOrgan('lungs', lungGroup);
+
+      // 心脏（橙红发光 + 心跳动画）
+      const heartMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.095, 20, 20),
+        makeMat(0xf97316, 0xea580c)
+      );
+      heartMesh.scale.set(0.95, 1.15, 0.85);
+      registerOrgan('heart', heartMesh);
+
+      // 肝脏
+      const liverMesh = new THREE.Mesh(
+        new THREE.ConeGeometry(0.11, 0.22, 16),
+        makeMat(0xf59e0b, 0xb45309)
+      );
+      liverMesh.rotation.z = Math.PI * 0.42;
+      liverMesh.scale.set(1, 1, 0.65);
+      registerOrgan('liver', liverMesh);
+
+      // 胃部
+      const stomachMesh = new THREE.Mesh(
+        new THREE.TorusGeometry(0.07, 0.042, 12, 20, Math.PI * 1.2),
+        makeMat(0x2dd4bf, 0x0d9488)
+      );
+      stomachMesh.rotation.z = Math.PI * 0.75;
+      registerOrgan('stomach', stomachMesh);
+
+      // 肾脏
+      const kidneyGroup = new THREE.Group();
+      const kGeo = new THREE.CapsuleGeometry(0.038, 0.065, 8, 12);
+      const kL = new THREE.Mesh(kGeo, makeMat(0x34d399, 0x059669));
+      kL.position.set(-0.28, 0, 0);
+      const kR = new THREE.Mesh(kGeo, makeMat(0x34d399, 0x059669));
+      kR.position.set(0, 0, 0);
+      kidneyGroup.add(kL, kR);
+      registerOrgan('kidneys', kidneyGroup);
+
+      // 骨骼/膝关节亮点
+      const boneMesh = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.042, 0.36, 8, 12),
+        makeMat(0xbae6fd, 0x38bdf8)
+      );
+      registerOrgan('bone', boneMesh);
+
+      // 下肢血管（风险高亮）
+      const vascMesh = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.022, 0.018, 0.44, 12),
+        makeMat(0xfb923c, 0xd97706)
+      );
+      registerOrgan('vascular', vascMesh);
+    }
+
+    function registerOrgan(id, obj) {
+      const cfg = ORGAN_DATA[id];
+      obj.position.set(...cfg.pos);
+      obj.userData.organId = id;
+      obj.traverse(child => { child.userData.organId = id; });
+      humanGroup.add(obj);
+      organMeshes[id] = obj;
+    }
+
+    // ==================== 3. 3D 坐标 -> 2D 浮窗与连线投影 ====================
+    const labelEls = {};
+    const lineEls = {};
+    const hotspotEls = {};
+    const chipEls = {};
+
+    function buildOverlays() {
+      Object.entries(ORGAN_DATA).forEach(([id, cfg]) => {
+        // 桌面端两侧悬浮卡片
+        const card = document.createElement('div');
+        card.className = `organ-float-card ${cfg.warn ? 'warn' : ''}`;
+        card.innerHTML = `
+          <div class="organ-icon-box">${cfg.icon}</div>
+          <div class="organ-meta">
+            <h4>${cfg.name}</h4>
+            <div class="organ-status ${cfg.warn ? 'warn' : 'ok'}">${cfg.warn ? '⚠' : '●'} ${cfg.status}</div>
+          </div>
+        `;
+        card.addEventListener('click', () => window.focusOrgan(id));
+        labelsLayer.appendChild(card);
+        labelEls[id] = card;
+
+        // SVG 牵引线
+        const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        poly.setAttribute('fill', 'none');
+        poly.setAttribute('stroke', cfg.warn ? 'rgba(245,158,11,0.75)' : 'rgba(125,211,252,0.65)');
+        poly.setAttribute('stroke-width', '1.4');
+        leaderSvg.appendChild(poly);
+        lineEls[id] = poly;
+
+        // 3D 表面热区圆点
+        const dot = document.createElement('div');
+        dot.className = `hotspot-dot ${cfg.warn ? 'warn' : ''}`;
+        dot.title = `${cfg.name} · ${cfg.status}`;
+        dot.addEventListener('click', (e) => {
+          e.stopPropagation();
+          window.focusOrgan(id);
+        });
+        hotspotsLayer.appendChild(dot);
+        hotspotEls[id] = dot;
+
+        // 移动端底部快捷器官胶囊
+        const chip = document.createElement('button');
+        chip.className = `organ-chip ${cfg.warn ? 'warn' : ''}`;
+        chip.innerHTML = `${cfg.icon} ${cfg.name}`;
+        chip.addEventListener('click', () => window.focusOrgan(id));
+        chipsContainer.appendChild(chip);
+        chipEls[id] = chip;
+      });
+    }
+
+    function updateProjectedOverlays() {
+      const w = canvasArea.clientWidth;
+      const h = canvasArea.clientHeight;
+      const tmpV = new THREE.Vector3();
+
+      Object.entries(ORGAN_DATA).forEach(([id, cfg]) => {
+        const mesh = organMeshes[id];
+        if (!mesh) return;
+
+        mesh.getWorldPosition(tmpV);
+        const worldPos = tmpV.clone();
+        tmpV.project(camera);
+
+        const sx = (tmpV.x * 0.5 + 0.5) * w;
+        const sy = (-tmpV.y * 0.5 + 0.5) * h;
+
+        // 更新热区圆点
+        const dot = hotspotEls[id];
+        dot.style.left = `${sx}px`;
+        dot.style.top = `${sy}px`;
+
+        // 仅在屏幕足够宽时更新牵引线和两侧卡片
+        if (window.innerWidth >= 768) {
+          const anchorWorld = worldPos.clone();
+          // 固定锚点分布在人物左右两侧，避免旋转时卡片互相叠压
+          const targetX = cfg.side === 'left' ? Math.max(12, w * 0.04) : Math.min(w - 142, w * 0.96 - 130);
+          const card = labelEls[id];
+          const cardH = 46;
+          const targetY = Math.min(Math.max(sy - cardH / 2, 12), h - cardH - 12);
+
+          card.style.left = `${targetX}px`;
+          card.style.top = `${targetY}px`;
+
+          const endX = cfg.side === 'left' ? targetX + 124 : targetX;
+          const endY = targetY + cardH / 2;
+          const midX = cfg.side === 'left' ? endX + 26 : endX - 26;
+
+          lineEls[id].setAttribute('points', `${sx},${sy} ${midX},${endY} ${endX},${endY}`);
+        }
+      });
+    }
+
+    // ==================== 4. 交互与射线点击 ====================
+    function setupInteraction() {
+      const raycaster = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
+      let downPos = { x: 0, y: 0 };
+
+      canvas.addEventListener('pointerdown', (e) => {
+        downPos = { x: e.clientX, y: e.clientY };
+      });
+
+      canvas.addEventListener('pointerup', (e) => {
+        const dist = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+        if (dist > 6) return; // 拖拽旋转不触发点击
+
+        const rect = canvas.getBoundingClientRect();
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObjects(Object.values(organMeshes), true);
+        if (hits.length > 0) {
+          const id = hits[0].object.userData.organId;
+          if (id) window.focusOrgan(id);
+        }
+      });
+
+      // 悬停手型变化
+      canvas.addEventListener('pointermove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObjects(Object.values(organMeshes), true);
+        canvas.style.cursor = hits.length > 0 ? 'pointer' : 'grab';
+      });
+
+      // 顶部模式切换
+      document.querySelectorAll('.stage-tab').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.stage-tab').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          const mode = btn.dataset.mode;
+          if (mode === 'overview') {
+            bodyShellMat.uniforms.uOpacity.value = 0.55;
+            innerWireMat.opacity = 0.08;
+          } else if (mode === 'systems') {
+            bodyShellMat.uniforms.uOpacity.value = 0.26;
+            innerWireMat.opacity = 0.14;
+          } else {
+            bodyShellMat.uniforms.uOpacity.value = 0.14;
+            innerWireMat.opacity = 0.22;
+          }
+        });
+      });
+
+      // 控制按钮
+      const btnAuto = document.getElementById('btn-autorotate');
+      btnAuto.addEventListener('click', () => {
+        autoRotate = !autoRotate;
+        btnAuto.classList.toggle('active', autoRotate);
+      });
+
+      document.getElementById('btn-reset-cam').addEventListener('click', () => {
+        selectedOrganId = null;
+        camera.position.set(0, 0.35, 5.2);
+        controls.target.set(0, 0.25, 0);
+        humanGroup.rotation.y = 0;
+        Object.values(labelEls).forEach(el => el.classList.remove('active'));
+        Object.values(chipEls).forEach(el => el.classList.remove('active'));
+      });
+
+      // 移动端：允许用户一键临时禁用 OrbitControls 以顺畅滑动长页面
+      const btnScrollLock = document.getElementById('btn-scroll-lock');
+      const syncMobileBtn = () => {
+        btnScrollLock.style.display = window.innerWidth < 768 ? 'inline-block' : 'none';
+      };
+      syncMobileBtn();
+      window.addEventListener('resize', syncMobileBtn);
+
+      btnScrollLock.addEventListener('click', () => {
+        const enabled = !controls.enabled;
+        controls.enabled = enabled;
+        canvas.style.touchAction = enabled ? 'none' : 'pan-y';
+        btnScrollLock.textContent = enabled ? '允许滑屏' : '恢复3D拖拽';
+        btnScrollLock.classList.toggle('active', !enabled);
+      });
+
+      // 自适应 ResizeObserver
+      new ResizeObserver(() => {
+        const w = canvasArea.clientWidth;
+        const h = canvasArea.clientHeight;
+        if (!w || !h) return;
+        camera.aspect = w / h;
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+      }).observe(canvasArea);
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const t = clock.getElapsedTime();
+
+      bodyShellMat.uniforms.uTime.value = t;
+
+      if (autoRotate) {
+        humanGroup.rotation.y += 0.0045;
+      }
+
+      // 心脏76BPM跳动 & 肺部呼吸动效
+      if (organMeshes.heart) {
+        const beat = 1 + 0.09 * Math.pow(Math.max(0, Math.sin(t * 4.2)), 4);
+        organMeshes.heart.scale.set(0.95 * beat, 1.15 * beat, 0.85 * beat);
+      }
+      if (organMeshes.lungs) {
+        const breath = 1 + 0.045 * Math.sin(t * 1.8);
+        organMeshes.lungs.scale.set(breath, breath, breath);
+      }
+
+      if (pedestalGroup) {
+        pedestalGroup.children[1].rotation.z = t * 0.6;
+      }
+
+      controls.update();
+      renderer.render(scene, camera);
+      updateProjectedOverlays();
+    }
+
+    // ==================== 5. 弹窗与外部调用 API ====================
+    window.focusOrgan = (id) => {
+      const cfg = ORGAN_DATA[id];
+      if (!cfg) return;
+      selectedOrganId = id;
+      autoRotate = false;
+      document.getElementById('btn-autorotate').classList.remove('active');
+
+      Object.entries(labelEls).forEach(([k, el]) => el.classList.toggle('active', k === id));
+      Object.entries(chipEls).forEach(([k, el]) => el.classList.toggle('active', k === id));
+
+      // 移动端点击风险卡时，先滚回 3D 视野
+      if (window.innerWidth < 768) {
+        document.getElementById('stage-wrapper').scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+
+      // 弹出详情抽屉
+      document.getElementById('modal-icon').textContent = cfg.icon;
+      document.getElementById('modal-title').textContent = `${cfg.name}专项评估`;
+      const badge = document.getElementById('modal-badge');
+      badge.textContent = cfg.status;
+      badge.className = `pill-tag ${cfg.warn ? 'amber' : ''}`;
+      if (!cfg.warn) {
+        badge.style.background = 'rgba(34,197,94,0.16)';
+        badge.style.color = '#22c55e';
+      } else {
+        badge.style = '';
+      }
+
+      document.getElementById('modal-summary').textContent = cfg.summary;
+      document.getElementById('modal-advice').textContent = cfg.advice;
+      document.getElementById('modal-kvs').innerHTML = cfg.kvs.map(
+        ([k, v]) => `<div class="detail-kv"><small>${k}</small><strong>${v}</strong></div>`
+      ).join('');
+
+      document.getElementById('detail-modal').classList.add('open');
+    };
+
+    window.openAISummary = () => {
+      document.getElementById('modal-icon').textContent = '🤖';
+      document.getElementById('modal-title').textContent = 'AI 全身健康深度解读';
+      const badge = document.getElementById('modal-badge');
+      badge.textContent = '综合评分 86分';
+      badge.className = 'pill-tag';
+      badge.style.background = 'rgba(56,189,248,0.18)';
+      badge.style.color = '#38bdf8';
+
+      document.getElementById('modal-summary').textContent =
+        '本次体检共检测 27 项核心指标，整体健康指数较上次提升 6 分。主要风险集中于“代谢与心血管”领域：血压处于 1 级高血压临界（142/92 mmHg），合并总胆固醇升高及轻度脂肪肝。';
+      document.getElementById('modal-kvs').innerHTML = `
+        <div class="detail-kv"><small>优先干预项</small><strong style="color:#f87171;">控血压 + 降血脂</strong></div>
+        <div class="detail-kv"><small>体重目标 (3个月)</small><strong>76.2 → 72.5 kg</strong></div>
+        <div class="detail-kv"><small>建议复查时间</small><strong>2027-02-19</strong></div>
+        <div class="detail-kv"><small>预计改善幅度</small><strong style="color:#22c55e;">+6~9 分</strong></div>
+      `;
+      document.getElementById('modal-advice').textContent =
+        '采用“地中海饮食结构 + 每周5次30分钟快走/游泳”，12周后轻度脂肪肝与血脂指标有极高概率逆转至正常范围。';
+      document.getElementById('detail-modal').classList.add('open');
+    };
+
+    window.openPlanModal = (type) => {
+      const plans = {
+        exercise: { icon: '🏃', title: 'AI 运动处方', tag: '每周 ≥ 150 分钟', summary: '建议每周进行 5 次中等强度有氧运动（如快走、慢跑、骑行或游泳），每次 30~40 分钟，心率保持在 115~135 次/分。', advice: '避免清晨空腹剧烈运动，以防血压骤升。' },
+        diet: { icon: '🥗', title: 'AI 膳食方案', tag: '低盐低脂高纤维', summary: '每日食盐不超过 5g，烹调改用橄榄油或茶籽油，主食粗细搭配（燕麦、糙米占1/3），增加深色蔬菜与优质蛋白。', advice: '戒除含糖饮料与夜宵，可有效改善轻度脂肪肝与总胆固醇。' },
+        sleep: { icon: '🛌', title: 'AI 作息与减压', tag: '7~8 小时睡眠', summary: '建议 23:00 前入睡，睡前 1 小时远离蓝光屏幕，保持卧室安静黑暗以提升深睡眠占比，稳定自主神经与夜间血压。', advice: '午间可小憩 15~20 分钟，不宜超过半小时。' },
+        followup: { icon: '🗓️', title: 'AI 智能复查计划', tag: '3 个月节点提醒', summary: '重点跟踪血压动态曲线、血脂四项（LDL-C/TC）及肝脏超声，同时建议 6 个月后复查胃镜。', advice: '日常可使用家用电子血压计早晚各测一次并同步至健康4S App。' }
+      };
+      const p = plans[type];
+      document.getElementById('modal-icon').textContent = p.icon;
+      document.getElementById('modal-title').textContent = p.title;
+      const badge = document.getElementById('modal-badge');
+      badge.textContent = p.tag;
+      badge.className = 'pill-tag';
+      badge.style.background = 'rgba(34,197,94,0.18)';
+      badge.style.color = '#22c55e';
+      document.getElementById('modal-summary').textContent = p.summary;
+      document.getElementById('modal-kvs').innerHTML = '';
+      document.getElementById('modal-advice').textContent = p.advice;
+      document.getElementById('detail-modal').classList.add('open');
+    };
+
+    window.closeModal = () => {
+      document.getElementById('detail-modal').classList.remove('open');
+    };
+
+    // ==================== 6. 交互式 SVG 趋势图 ====================
+    function renderTrendChart() {
+      const data = [
+        { m: '6月', bp: 143, lip: 6.1, wt: 78.0 },
+        { m: '7月', bp: 135, lip: 5.7, wt: 77.2 },
+        { m: '8月', bp: 134, lip: 5.8, wt: 76.9 },
+        { m: '9月', bp: 138, lip: 5.9, wt: 76.5 },
+        { m: '10月', bp: 141, lip: 5.7, wt: 76.0 },
+        { m: '11月', bp: 142, lip: 5.8, wt: 76.2 }
+      ];
+      const svg = document.getElementById('trend-svg');
+      const W = 500, H = 185, padL = 36, padR = 36, padT = 18, padB = 26;
+      const plotW = W - padL - padR, plotH = H - padT - padB;
+
+      const xAt = i => padL + (i / (data.length - 1)) * plotW;
+      const yBP = v => padT + (1 - (v - 100) / 60) * plotH;
+      const yLip = v => padT + (1 - (v - 4.0) / 3.5) * plotH;
+      const yWt = v => padT + (1 - (v - 60) / 30) * plotH;
+
+      let html = '';
+      // 水平参考线 & 左右刻度
+      [100, 120, 140, 160].forEach((val, idx) => {
+        const y = yBP(val);
+        html += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="rgba(148,163,184,0.14)" stroke-dasharray="3,3"/>`;
+        html += `<text x="${padL - 8}" y="${y + 4}" text-anchor="end" fill="#64748b" font-size="10">${val}</text>`;
+        html += `<text x="${W - padR + 8}" y="${y + 4}" text-anchor="start" fill="#64748b" font-size="10">${60 + idx * 10}</text>`;
+      });
+
+      const makeLine = (fn, color) => {
+        const pts = data.map((d, i) => `${xAt(i)},${fn(d)}`).join(' ');
+        const circles = data.map((d, i) =>
+          `<circle cx="${xAt(i)}" cy="${fn(d)}" r="3.8" fill="#061329" stroke="${color}" stroke-width="2.2"/>`
+        ).join('');
+        return `<polyline fill="none" stroke="${color}" stroke-width="2.2" points="${pts}"/>${circles}`;
+      };
+
+      html += makeLine(d => yBP(d.bp), '#38bdf8');
+      html += makeLine(d => yLip(d.lip), '#f59e0b');
+      html += makeLine(d => yWt(d.wt), '#a78bfa');
+
+      // X 轴月份 + 交互热区列
+      html += `<line id="hover-guide" x1="${xAt(5)}" y1="${padT}" x2="${xAt(5)}" y2="${H - padB}" stroke="rgba(56,189,248,0.45)" stroke-dasharray="3,3"/>`;
+      data.forEach((d, i) => {
+        const x = xAt(i);
+        html += `<text x="${x}" y="${H - 7}" text-anchor="middle" fill="#94a3b8" font-size="11">${d.m}</text>`;
+        html += `<rect x="${x - 32}" y="${padT}" width="64" height="${plotH}" fill="transparent" style="cursor:pointer" data-idx="${i}"/>`;
+      });
+
+      svg.innerHTML = html;
+
+      svg.querySelectorAll('rect[data-idx]').forEach(rect => {
+        const updateTip = () => {
+          const i = Number(rect.dataset.idx);
+          const d = data[i];
+          document.getElementById('hover-guide').setAttribute('x1', xAt(i));
+          document.getElementById('hover-guide').setAttribute('x2', xAt(i));
+          document.getElementById('tt-month').textContent = d.m;
+          document.getElementById('tt-bp').textContent = d.bp;
+          document.getElementById('tt-lip').textContent = d.lip;
+          document.getElementById('tt-wt').textContent = d.wt;
+        };
+        rect.addEventListener('mouseenter', updateTip);
+        rect.addEventListener('click', updateTip);
+      });
+    }
+
+    // ==================== 7. 医学影像 Canvas 程序化渲染 ====================
+    function renderMedicalImages() {
+      // 肝脏全息超声预览
+      const c1 = document.getElementById('img-liver').getContext('2d');
+      const g1 = c1.createRadialGradient(110, 65, 10, 110, 65, 95);
+      g1.addColorStop(0, '#fb923c'); g1.addColorStop(0.55, '#9d174d'); g1.addColorStop(1, '#04091a');
+      c1.fillStyle = g1; c1.fillRect(0, 0, 220, 130);
+      c1.fillStyle = 'rgba(254, 240, 138, 0.75)';
+      for (let i = 0; i < 65; i++) {
+        c1.beginPath();
+        c1.arc(40 + Math.random() * 140, 25 + Math.random() * 80, Math.random() * 1.8, 0, Math.PI * 2);
+        c1.fill();
+      }
+
+      // 胃镜黏膜纹理预览
+      const c2 = document.getElementById('img-stomach').getContext('2d');
+      const g2 = c2.createRadialGradient(140, 50, 8, 110, 65, 110);
+      g2.addColorStop(0, '#fca5a5'); g2.addColorStop(0.45, '#dc2626'); g2.addColorStop(1, '#450a0a');
+      c2.fillStyle = g2; c2.fillRect(0, 0, 220, 130);
+      c2.strokeStyle = 'rgba(254,202,202,0.35)'; c2.lineWidth = 4;
+      for (let i = 0; i < 5; i++) {
+        c2.beginPath();
+        c2.moveTo(20, 20 + i * 22);
+        c2.bezierCurveTo(80, 10 + i * 20, 140, 40 + i * 18, 200, 25 + i * 22);
+        c2.stroke();
+      }
+
+      // 肠镜腔道预览
+      const c3 = document.getElementById('img-colon').getContext('2d');
+      const g3 = c3.createRadialGradient(110, 65, 6, 110, 65, 100);
+      g3.addColorStop(0, '#2b0909'); g3.addColorStop(0.35, '#991b1b'); g3.addColorStop(0.8, '#ea580c'); g3.addColorStop(1, '#431407');
+      c3.fillStyle = g3; c3.fillRect(0, 0, 220, 130);
+      c3.strokeStyle = 'rgba(253,186,116,0.28)'; c3.lineWidth = 3;
+      [22, 38, 56, 76].forEach(r => {
+        c3.beginPath(); c3.arc(110, 65, r, 0, Math.PI * 2); c3.stroke();
+      });
+    }
+
+    // 导航栏切换态
+    document.querySelectorAll('.nav-pill').forEach(pill => {
+      pill.addEventListener('click', () => {
+        document.querySelectorAll('.nav-pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+      });
+    });
+
+    // 启动初始化
+    try {
+      init3D();
+    } catch (err) {
+      console.error('3D 初始化失败:', err);
+      canvasArea.innerHTML = `<div style="display:grid;place-items:center;height:100%;color:#94a3b8;font-size:13px;">WebGL 3D 渲染加载中或浏览器不支持</div>`;
+    }
+    renderTrendChart();
+    renderMedicalImages();
+  </script>
+</body>
+</html>
+```
+
+---
+
+### 生产环境升级建议（Vue / React 项目落地思路）
+
+如果你计划将此原型集成到正式的 **Vue 3 / React** 前端工程中，建议做以下升级：
+
+1. **高精度人体模型替换（`.glb` + Draco 压缩）**
+   - 代码中为了单文件零依赖使用了 Three.js 程序化几何体（`LatheGeometry` + `Fresnel Shader`）。
+   - 正式项目可用 Blender 导出人体外壳与独立命名器官（如 `organ_heart`、`organ_liver`）的 `.glb` 模型，经 **Draco 压缩**（通常可压到 1~2MB 以内），使用 `GLTFLoader` 加载后按节点名绑定点击事件和发光材质。
+2. **移动端性能与触控细节**
+   - **PixelRatio 限制**：保留 `Math.min(window.devicePixelRatio, 2)`，防止 3x 屏手机 GPU 过载发热。
+   - **防滑屏卡死**：移动端浏览器中，`OrbitControls` 会接管单指触摸事件（`touch-action: none`），所以页面里专门做了**“允许滑屏 / 恢复3D拖拽”**切换按钮，且在手机端默认将 3D 区域放在顶部并搭配横向器官胶囊栏，不依赖复杂拖拽也能一键直达器官报告。
+   - **Bottom Sheet 交互**：利用 `@media (max-width: 767px)` 将详情弹窗无缝转化为底部抽屉，符合手机单手操作习惯。
